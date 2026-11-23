@@ -12,6 +12,8 @@ Requêtes : [`checks.sql`](checks.sql)
 | 3 | products | Informations produit manquantes | 610 produits (1,9 %), 1,4 % des articles vendus | Conserver, catégorie « non renseignée » |
 | 4 | orders | Commandes `delivered` sans date de livraison | 8 commandes | Conserver, exclure des calculs de délai |
 | 5 | orders | Commandes `delivered` sans date d'approbation | 14 commandes | Conserver, exclure des calculs de délai d'approbation |
+| 6 | orders | Remise au transporteur avant l'approbation | 1 359 commandes, dont 16 à plus de 7 jours | Tolérer jusqu'à 7 jours, signaler les 16 |
+| 7 | orders | Livraison client avant remise au transporteur | 23 commandes | Signaler, exclure des calculs de délai |
 
 ## Détail des constats
 
@@ -59,6 +61,33 @@ Requêtes : [`checks.sql`](checks.sql)
 - **Décision** : conserver ces commandes et signaler les 14 commandes livrées comme anomalie.
 - **Impact sur le modèle** : les calculs de délai d'approbation (achat → approbation) excluront les commandes sans date.
 
+### 6. Remise au transporteur avant l'approbation du paiement
+
+- **Contrôle** : cohérence des dates de commande (requêtes 4.3 et 4.6a à 4.6c)- **Constat** : 1 359 commandes (1,4 %) ont été remises au transporteur avant
+  l'approbation du paiement. Écart médian : 17 h (Q1 : 2 h, Q3 : 26 h, max : 171 jours).
+  - 242 commandes : moins d'1 heure
+  - 631 commandes : 1 à 24 heures
+  - 470 commandes : 1 à 7 jours
+  - 16 commandes : plus de 7 jours
+- **Analyse** : pour la grande majorité des commandes, l'écart est de quelques heures
+  à quelques jours. Cela peut s'expliquer par un décalage d'horodatage entre systèmes
+  ou par des vendeurs qui expédient avant la confirmation définitive du paiement.
+  La moyenne (24 h) est tirée vers le haut par quelques valeurs extrêmes, d'où
+  l'utilisation de la médiane. Les 16 commandes avec plus de 7 jours d'écart sont
+  aberrantes.
+- **Décision** : tolérer un écart de 7 jours maximum. Signaler les 16 commandes au-delà
+  comme anomalies.
+- **Impact sur le modèle** : les 16 commandes aberrantes seront exclues des calculs
+  de délai entre approbation et expédition.
+
+### 7. Livraison client avant la remise au transporteur
+
+- **Contrôle** : cohérence des dates de commande (requête 4.4)
+- **Constat** : 23 commandes ont une date de livraison client antérieure à la date de remise au transporteur.
+- **Analyse** : c'est physiquement impossible : il s'agit d'erreurs de saisie de dates.
+- **Décision** : conserver ces commandes et les signaler comme anomalies.
+- **Impact sur le modèle** : ces 23 commandes seront exclues des calculs de délai de livraison.
+
 ## Contrôles sans anomalie
 
 | Contrôle | Table | Résultat |
@@ -79,6 +108,9 @@ Requêtes : [`checks.sql`](checks.sql)
 | Valeurs manquantes | order_payments | ✅ aucune |
 | Valeurs manquantes | sellers | ✅ aucune |
 | Valeurs manquantes | product_category_name_translation | ✅ aucune |
+| Approbation avant l'achat | orders | ✅ 0 commande |
+| Livraison client avant l'achat | orders | ✅ 0 commande |
+| Livraison estimée avant l'achat | orders | ✅ 0 commande |
 
 ## Observations
 

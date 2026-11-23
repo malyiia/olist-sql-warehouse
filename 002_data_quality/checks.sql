@@ -305,3 +305,77 @@ SELECT *
 FROM stg.orders
 WHERE order_approved_at IS NULL
   AND order_status NOT IN ('canceled', 'created');
+/* =========================================================
+   CONTRÔLE 4 : DATES INCOHÉRENTES
+   Ordre attendu : achat <= approbation <= transporteur <= livraison client
+   Les dates NULL ne sont pas comptées (déjà traitées au contrôle 3)
+   ========================================================= */
+
+-- 4.1 orders : approbation avant l'achat
+-- Résultat : 0
+SELECT * FROM stg.orders
+WHERE order_approved_at < order_purchase_timestamp;
+
+-- 4.2 orders : livraison client avant l'achat
+-- Résultat : 0
+SELECT * FROM stg.orders
+WHERE order_delivered_customer_date < order_purchase_timestamp;
+
+-- 4.3 orders : remise au transporteur avant l'approbation
+-- Anomalie : 1 359 commandes (voir findings.md, point 6)
+SELECT * FROM stg.orders
+WHERE order_delivered_carrier_date < order_approved_at;
+
+-- 4.4 orders : livraison client avant la remise au transporteur
+-- Anomalie : 23 commandes (voir findings.md, point 7)
+SELECT * FROM stg.orders
+WHERE order_delivered_customer_date < order_delivered_carrier_date;
+
+-- 4.5 orders : livraison estimée avant l'achat
+-- Résultat : 0
+SELECT * FROM stg.orders
+WHERE order_estimated_delivery_date < order_purchase_timestamp;
+
+
+/* ---------------------------------------------------------
+   Approfondissements du contrôle 4 (anomalie 4.3)
+   --------------------------------------------------------- */
+
+-- 4.6a orders : ampleur de l'écart transporteur / approbation (en heures)
+-- Résultat : min 0 h, moyenne 24 h, max 4 109 h (environ 171 jours)
+SELECT
+    MIN(DATEDIFF(HOUR, order_delivered_carrier_date, order_approved_at)) AS ecart_min_h,
+    AVG(DATEDIFF(HOUR, order_delivered_carrier_date, order_approved_at)) AS ecart_moyen_h,
+    MAX(DATEDIFF(HOUR, order_delivered_carrier_date, order_approved_at)) AS ecart_max_h
+FROM stg.orders
+WHERE order_delivered_carrier_date < order_approved_at;
+
+-- 4.6b orders : médiane et quartiles de l'écart transporteur / approbation (en heures)
+-- Résultat : Q1 2 h, médiane 17 h, Q3 26 h
+SELECT DISTINCT
+    PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY DATEDIFF(HOUR, order_delivered_carrier_date, order_approved_at)) OVER () AS q1_h,
+    PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY DATEDIFF(HOUR, order_delivered_carrier_date, order_approved_at)) OVER () AS mediane_h,
+    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY DATEDIFF(HOUR, order_delivered_carrier_date, order_approved_at)) OVER () AS q3_h
+FROM stg.orders
+WHERE order_delivered_carrier_date < order_approved_at;
+
+-- 4.6c orders : répartition par tranche de l'écart transporteur / approbation
+-- Résultat : < 1 h : 242 | 1-24 h : 631 | 1-7 j : 470 | > 7 j : 16
+SELECT
+    CASE
+        WHEN DATEDIFF(MINUTE, order_delivered_carrier_date, order_approved_at) < 60 THEN '1. Moins d''1 heure'
+        WHEN DATEDIFF(HOUR,   order_delivered_carrier_date, order_approved_at) < 24 THEN '2. 1 à 24 heures'
+        WHEN DATEDIFF(DAY,    order_delivered_carrier_date, order_approved_at) < 7  THEN '3. 1 à 7 jours'
+        ELSE '4. Plus de 7 jours'
+    END AS tranche_ecart,
+    COUNT(*) AS nb_commandes
+FROM stg.orders
+WHERE order_delivered_carrier_date < order_approved_at
+GROUP BY
+    CASE
+        WHEN DATEDIFF(MINUTE, order_delivered_carrier_date, order_approved_at) < 60 THEN '1. Moins d''1 heure'
+        WHEN DATEDIFF(HOUR,   order_delivered_carrier_date, order_approved_at) < 24 THEN '2. 1 à 24 heures'
+        WHEN DATEDIFF(DAY,    order_delivered_carrier_date, order_approved_at) < 7  THEN '3. 1 à 7 jours'
+        ELSE '4. Plus de 7 jours'
+    END
+ORDER BY tranche_ecart;
